@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Microphone / input device picker for the panel (pactl + rofi).
+# Usage: mic-menu
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+set -uo pipefail
+
+notify() { notify-send -t 3000 "$1" "${2:-}" 2>/dev/null || true; }
+
+# prints: <source name> TAB <description>   (monitors excluded)
+sources() {
+    pactl list sources 2>/dev/null | awk '
+        /^\tName:/ {n=$2}
+        /^\tDescription:/ {d=$0; sub(/^\tDescription: /,"",d); if (n !~ /\.monitor$/) print n "\t" d}'
+}
+
+set_default() {
+    local name="$1" id
+    pactl set-default-source "$name"
+    # move running recordings (OBS, Discord, ...) to the chosen input
+    pactl list short source-outputs 2>/dev/null | cut -f1 | while read -r id; do
+        pactl move-source-output "$id" "$name" 2>/dev/null || true
+    done
+}
+
+show_menu() {
+    local -A SRC=()
+    local -a entries=()
+    local def name desc disp choice muted
+
+    def="$(pactl get-default-source 2>/dev/null)"
+    while IFS=$'\t' read -r name desc; do
+        [[ -n "$name" ]] || continue
+        if [[ "$name" == "$def" ]]; then disp="● $desc  (default)"; else disp="○ $desc"; fi
+        entries+=("$disp"); SRC["$disp"]="$name"
+    done < <(sources)
+    (( ${#entries[@]} )) || entries+=("(no input devices found - try Fix)")
+
+    muted="$(pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null | awk '{print $2}')"
+    if [[ "$muted" == yes ]]; then entries+=("✓ Unmute microphone"); else entries+=("× Mute microphone"); fi
+    entries+=("▸ Open mixer (Input Devices)" "▸ Fix / rescan inputs" "▸ Show diagnostics")
+
+    choice="$(printf '%s\n' "${entries[@]}" | cozy-menu --dmenu --prompt "Input  " \
+              --lines "${#entries[@]}" --width 60)" || exit 0
+
+    case "$choice" in
+        "× Mute microphone"|"✓ Unmute microphone") pactl set-source-mute @DEFAULT_SOURCE@ toggle ;;
+        "▸ Open mixer (Input Devices)") setsid -f pavucontrol -t 4 >/dev/null 2>&1 ;;
+        "▸ Fix / rescan inputs")
+            setsid -f kitty -e sh -c '~/.local/bin/audio-inputs fix; echo; read -r -p "Press Enter to close "' ;;
+        "▸ Show diagnostics")
+            setsid -f kitty -e sh -c '~/.local/bin/audio-inputs status | less -R' ;;
+        "("*) ;;
+        *)
+            [[ -n "${SRC[$choice]:-}" ]] || exit 0
+            set_default "${SRC[$choice]}"
+            notify "Input device" "${choice#* }" ;;
+    esac
+}
+
+show_menu

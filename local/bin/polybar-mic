@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Icon only, like the Sway panel (green = live, red = muted). Volume: scroll / mic menu.
+MIC=$(printf '\xef\x84\xb0')    # U+F130
+MICOFF=$(printf '\xef\x84\xb1') # U+F131
+m="$(pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null | awk '{print $2}')"
+if [[ "$m" == yes || -z "$m" ]]; then printf '%%{F#ef8e9a}%s%%{F-}\n' "$MICOFF"
+else printf '%%{F#a9d9a0}%s%%{F-}\n' "$MIC"; fi

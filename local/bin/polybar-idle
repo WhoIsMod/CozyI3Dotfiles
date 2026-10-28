@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# "Keep screen awake" toggle (the eye icon). Usage: polybar-idle [status|toggle]
+EYE=$(printf '\xef\x81\xae')      # U+F06E
+EYEOFF=$(printf '\xef\x81\xb0')   # U+F070
+awake() { xset q 2>/dev/null | grep -q 'DPMS is Disabled'; }
+case "${1:-status}" in
+    toggle)
+        if awake; then xset s 600 600 +dpms; xset dpms 900 900 900
+        else xset s off -dpms; fi ;;
+    *)
+        if awake; then printf '%%{F#ecd08a}%s%%{F-}\n' "$EYE"
+        else printf '%%{F#8b93b0}%s%%{F-}\n' "$EYEOFF"; fi ;;
+esac

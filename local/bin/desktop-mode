@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+set -euo pipefail
+
+STATE_DIR="$HOME/.local/state"
+STATE_FILE="$STATE_DIR/desktop-mode"
+GAME_PID_FILE="$STATE_DIR/gamemode.pid"
+mkdir -p "$STATE_DIR"
+
+notify()       { command -v notify-send >/dev/null 2>&1 && notify-send -t 1800 "$1" "${2:-}" || true; }
+current_mode() { [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" || echo business; }
+dnd_on()       { dunstctl set-paused true  >/dev/null 2>&1 || true; }
+dnd_off()      { dunstctl set-paused false >/dev/null 2>&1 || true; }
+on_battery()   { grep -qsx 'Discharging' /sys/class/power_supply/BAT*/status; }
+compositor_off() { pkill -x picom 2>/dev/null || true; }
+compositor_on()  { pgrep -x picom >/dev/null 2>&1 || setsid -f picom --config "$HOME/.config/picom/picom.conf" >/dev/null 2>&1 || true; }
+screen_awake()   { xset s off -dpms 2>/dev/null || true; }
+screen_normal()  { xset s 600 600 +dpms 2>/dev/null || true; xset dpms 900 900 900 2>/dev/null || true; }
+perf_profile()   { powerprofilesctl set "$1" >/dev/null 2>&1 || true; }
+
+stop_game_mode() {
+    if [[ -f "$GAME_PID_FILE" ]]; then
+        pid="$(cat "$GAME_PID_FILE" 2>/dev/null || true)"
+        [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null && kill "$pid" 2>/dev/null || true
+        rm -f "$GAME_PID_FILE"
+    fi
+}
+
+start_gamemode_client() {
+    stop_game_mode
+    if ! command -v gamemoderun >/dev/null 2>&1; then
+        notify "Desktop mode" "GameMode is not installed."; exit 1
+    fi
+    # Keep a GameMode client alive so system-wide optimisations stay active.
+    nohup gamemoderun sleep infinity >/dev/null 2>&1 &
+    echo $! > "$GAME_PID_FILE"
+}
+
+start_game_mode() {
+    start_gamemode_client
+    echo game > "$STATE_FILE"
+    dnd_off
+    compositor_off
+    perf_profile performance
+    notify "GAME MODE" "Performance profile on, compositor off"
+}
+
+start_stream_mode() {
+    start_gamemode_client
+    echo stream > "$STATE_FILE"
+    on_battery && notify "On battery" "Plug in for stable streaming" || true
+    compositor_off
+    screen_awake
+    perf_profile performance
+    notify "STREAM MODE" "Performance profile on, notifications silenced"
+    # Silence notifications so nothing private pops up on stream (after the notice above shows)
+    sleep 2
+    dnd_on
+    pgrep -x obs >/dev/null 2>&1 || setsid -f "$HOME/.local/bin/obs-open" >/dev/null 2>&1 || true
+}
+
+start_business_mode() {
+    stop_game_mode
+    echo business > "$STATE_FILE"
+    dnd_off
+    compositor_on
+    screen_normal
+    perf_profile balanced
+    notify "BUSINESS MODE" "Balanced profile, compositor on"
+}
+
+# Silent reset used at login (the saved state may be stale after a reboot)
+reset_mode() {
+    stop_game_mode
+    echo business > "$STATE_FILE"
+    dnd_off
+    compositor_on
+    screen_normal
+}
+
+toggle_mode() {
+    if [[ "$(current_mode)" == business ]]; then start_game_mode; else start_business_mode; fi
+}
+
+show_menu() {
+    choice="$(printf '%s\n' "Game Mode" "Stream Mode" "Business Mode" "Lock" "Logout" "Reboot" "Shutdown" \
+        | cozy-menu --dmenu --prompt "Mode  " --lines 7 --width 28)" || exit 0
+    case "$choice" in
+        "Game Mode")     start_game_mode ;;
+        "Stream Mode")   start_stream_mode ;;
+        "Business Mode") start_business_mode ;;
+        "Lock")          i3lock -c 1a1d2b ;;
+        "Logout")        i3-msg exit ;;
+        "Reboot")        systemctl reboot ;;
+        "Shutdown")      systemctl poweroff ;;
+    esac
+}
+
+case "${1:-}" in
+    game)     start_game_mode ;;
+    stream)   start_stream_mode ;;
+    business) start_business_mode ;;
+    reset)    reset_mode ;;
+    toggle)   toggle_mode ;;
+    menu)     show_menu ;;
+    status)   current_mode ;;
+    *) echo "Usage: $0 {game|stream|business|toggle|menu|status|reset}"; exit 1 ;;
+esac

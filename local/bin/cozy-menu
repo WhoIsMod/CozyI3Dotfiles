@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# fuzzel-compatible dmenu wrapper around rofi:  cozy-menu --dmenu --prompt P --lines N --width W
+prompt="Select"; lines=8
+while (( $# )); do
+    case "$1" in
+        --prompt) prompt="$(sed 's/[[:space:]]*$//' <<<"${2:-}")"; shift 2 ;;
+        --lines)  lines="${2:-8}"; shift 2 ;;
+        *)        shift ;;
+    esac
+done
+exec rofi -dmenu -i -p "$prompt" -theme-str "listview { lines: ${lines}; } window { width: 560px; }"

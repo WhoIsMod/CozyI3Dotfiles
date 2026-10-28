@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+s="$(playerctl status 2>/dev/null)" || exit 0
+ICON=$(printf '\xef\x86\xbc')   # U+F1BC
+if [[ "$s" == Playing ]]; then
+    t="$(playerctl metadata --format '{{ artist }} — {{ title }}' 2>/dev/null)"
+    [[ -n "$t" ]] || exit 0
+    printf '%%{F#a9d9a0}%s%%{F-} %s\n' "$ICON" "${t:0:42}"
+else
+    t="$(playerctl metadata --format '{{ title }}' 2>/dev/null)"
+    [[ -n "$t" ]] || exit 0
+    printf '%%{F#ecd08a}%s%%{F-} %s\n' "$ICON" "${t:0:42}"
+fi

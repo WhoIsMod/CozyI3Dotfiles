@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+GAMEPAD=$(printf '\xef\x84\x9b')    # U+F11B
+BRIEF=$(printf '\xef\x82\xb1')      # U+F0B1
+CAM=$(printf '\xef\x80\xbd')        # U+F03D
+case "$("$HOME/.local/bin/desktop-mode" status)" in
+    game)   printf '{"text":"%s  GAME","class":"game","tooltip":"Game Mode (click: Business, right-click: menu)"}\n' "$GAMEPAD" ;;
+    stream) printf '{"text":"%s  STREAM","class":"stream","tooltip":"Stream Mode: performance profile, notifications silenced (click: Business)"}\n' "$CAM" ;;
+    *)      printf '{"text":"%s  BUSINESS","class":"business","tooltip":"Business Mode (click: Game, right-click: menu)"}\n' "$BRIEF" ;;
+esac

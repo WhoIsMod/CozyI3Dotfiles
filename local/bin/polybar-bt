@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+ICON=$(printf '\xef\x8a\x94')   # U+F294
+if ! bluetoothctl show 2>/dev/null | grep -q 'Powered: yes'; then
+    printf '%%{F#6f7896}%s%%{F-}\n' "$ICON"; exit 0
+fi
+mapfile -t devs < <(bluetoothctl devices Connected 2>/dev/null)
+n=${#devs[@]}
+if (( n == 0 )); then printf '%%{F#8aa4ff}%s%%{F-}\n' "$ICON"; exit 0; fi
+mac="$(awk '{print $2}' <<<"${devs[0]}")"
+info="$(bluetoothctl info "$mac" 2>/dev/null)"
+alias="$(sed -n 's/^[[:space:]]*Alias: //p' <<<"$info" | head -n1)"
+batt="$(sed -n 's/.*Battery Percentage: 0x[0-9a-fA-F]* (\([0-9]*\)).*/\1/p' <<<"$info" | head -n1)"
+if [[ -n "$batt" ]]; then printf '%%{F#a9d9a0}%s %s %s%%%%{F-}\n' "$ICON" "$alias" "$batt"
+else printf '%%{F#a9d9a0}%s %d%%{F-}\n' "$ICON" "$n"; fi

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# libinput touchpad defaults on X11: tap to click, natural scrolling, palm rejection while typing.
+command -v xinput >/dev/null 2>&1 || exit 0
+xinput list --name-only 2>/dev/null | grep -iE 'touchpad|trackpad' | while IFS= read -r d; do
+    for p in "libinput Tapping Enabled" "libinput Natural Scrolling Enabled" "libinput Disable While Typing Enabled"; do
+        xinput set-prop "$d" "$p" 1 2>/dev/null || true
+    done
+done

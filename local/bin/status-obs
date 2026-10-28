@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+CAM=$(printf '\xef\x80\xbd')   # U+F03D
+if pgrep -x obs >/dev/null 2>&1; then
+    printf '{"text":"%s  OBS","class":"running","tooltip":"OBS Studio is running\\nClick: focus, right-click: Stream mode"}\n' "$CAM"
+else
+    printf '{"text":"%s  OBS","class":"idle","tooltip":"OBS Studio\\nClick: launch, right-click: Stream mode"}\n' "$CAM"
+fi

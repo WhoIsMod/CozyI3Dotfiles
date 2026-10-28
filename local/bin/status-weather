@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Auto-detects location by IP via wttr.in; put a city after wttr.in/ to pin it.
+out="$(curl -fsS --max-time 8 'wttr.in/?format=%c+%t' 2>/dev/null)" || exit 0
+echo "${out//+/}"

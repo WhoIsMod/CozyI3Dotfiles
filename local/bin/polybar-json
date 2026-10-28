@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Run a script that prints Waybar-style JSON ({"text":..., "class":...}) and print it as a
+# rounded "pill" in polybar, coloured by class. Usage: polybar-json <script> [args...]
+out="$("$@" 2>/dev/null)" || exit 0
+text="$(sed -n 's/.*"text":"\([^"]*\)".*/\1/p' <<<"$out")"
+class="$(sed -n 's/.*"class":"\([^"]*\)".*/\1/p' <<<"$out")"
+[[ -n "$text" ]] || exit 0
+LCAP=$(printf '\xee\x82\xb6')   # U+E0B6 rounded left cap
+RCAP=$(printf '\xee\x82\xb4')   # U+E0B4 rounded right cap
+bg='#232738'
+case "$class" in
+    business)    fg='#8aa4ff' ;;
+    game)        bg='#b4a0ff'; fg='#1a1d2b' ;;
+    stream)      bg='#ef8e9a'; fg='#1a1d2b' ;;
+    running)     fg='#ef8e9a' ;;
+    connected)   fg='#a9d9a0' ;;
+    connecting)  fg='#ecd08a' ;;
+    *)           fg='#6f7896' ;;
+esac
+printf '%%{F%s}%s%%{B%s}%%{F%s} %s %%{B-}%%{F%s}%s%%{F-}\n' "$bg" "$LCAP" "$bg" "$fg" "$text" "$bg" "$RCAP"

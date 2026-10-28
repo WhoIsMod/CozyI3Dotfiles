@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+set -euo pipefail
+"$HOME/.local/bin/desktop-mode" game
+if command -v steam >/dev/null 2>&1; then exec steam
+elif command -v lutris >/dev/null 2>&1; then exec lutris
+else notify-send "Game launcher" "Steam/Lutris was not found."; fi

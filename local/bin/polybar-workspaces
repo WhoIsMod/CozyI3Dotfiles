@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Workspace dots with persistent workspaces 1-5 (like the Sway panel); click to switch,
+# scroll to cycle. Runs forever and re-renders on i3 workspace events (polybar tail = true).
+command -v jq >/dev/null 2>&1 || { echo "install jq"; sleep infinity; }
+
+render() {
+    local out="" n f u dot color
+    local -A seen=() foc=() urg=()
+    while read -r n f u; do
+        (( n >= 1 )) || continue
+        seen[$n]=1; foc[$n]="$f"; urg[$n]="$u"
+    done < <(i3-msg -t get_workspaces 2>/dev/null | jq -r '.[] | "\(.num) \(.focused) \(.urgent)"')
+    local -a nums=(1 2 3 4 5)
+    while read -r n; do [[ -n "$n" ]] && (( n > 5 )) && nums+=("$n"); done \
+        < <(printf '%s\n' "${!seen[@]}" | sort -n)
+    for n in "${nums[@]}"; do
+        if   [[ "${foc[$n]:-}" == true ]]; then dot='●'; color='#8aa4ff'
+        elif [[ "${urg[$n]:-}" == true ]]; then dot='◉'; color='#ef8e9a'
+        else dot='○'; color='#6f7896'; fi
+        out+="%{A1:i3-msg workspace number $n:}%{F$color} $dot %{F-}%{A}"
+    done
+    printf '%s\n' "%{A4:i3-msg workspace prev:}%{A5:i3-msg workspace next:}${out}%{A}%{A}"
+}
+
+render
+i3-msg -t subscribe -m '["workspace"]' 2>/dev/null | while read -r _; do render; done

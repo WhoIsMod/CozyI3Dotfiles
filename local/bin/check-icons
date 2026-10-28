@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Reports which icon glyphs used by the panel have no installed font (those show as empty boxes).
+# Fix: bash install.sh --fonts   (from the cozy-i3 folder), then ~/.config/polybar/launch.sh
+declare -A names=(
+  [f00a]="launcher" [f120]="terminal" [f07b]="files" [f269]="browser" [f392]="discord"
+  [f1bc]="spotify/music" [f1b6]="steam" [f017]="clock" [f2db]="cpu" [f538]="memory"
+  [f028]="volume" [f026]="muted" [f1eb]="wifi" [f071]="offline" [f185]="brightness"
+  [f0e7]="charging" [f1e6]="plugged" [f244]="battery 0%" [f243]="battery 25%" [f242]="battery 50%"
+  [f241]="battery 75%" [f240]="battery 100%" [f011]="power" [f0ac]="ethernet" [f06e]="awake"
+  [f070]="screen may sleep" [f130]="mic" [f131]="mic muted" [f294]="bluetooth" [f03d]="OBS/stream"
+  [f11b]="game mode" [f0b1]="business mode" [f023]="vpn connected" [f09c]="vpn off" [f021]="vpn connecting"
+  [e0b6]="pill left cap" [e0b4]="pill right cap" [25cf]="workspace focused" [25cb]="workspace" [25c9]="workspace urgent"
+)
+missing=0
+# polybar only draws glyphs from the fonts it is configured with, so check just those
+families=("JetBrainsMono Nerd Font" "Font Awesome 6 Free" "Font Awesome 6 Brands" "Symbols Nerd Font")
+for cp in $(printf '%s\n' "${!names[@]}" | sort); do
+    found=""
+    for fam in "${families[@]}"; do
+        if [[ -n "$(fc-list ":family=$fam:charset=$cp" family 2>/dev/null | head -n1)" ]]; then found="$fam"; break; fi
+    done
+    if [[ -z "$found" ]]; then printf 'MISSING  U+%-5s %s\n' "${cp^^}" "${names[$cp]}"; missing=$((missing+1))
+    else printf 'ok       U+%-5s %-18s %s\n' "${cp^^}" "${names[$cp]}" "$found"; fi
+done
+echo
+for f in 'JetBrainsMono Nerd Font' 'Font Awesome 6 Free' 'Font Awesome 6 Brands' 'Symbols Nerd Font'; do
+    if fc-list | grep -qi "$f"; then echo "font present: $f"; else echo "font MISSING: $f"; fi
+done
+echo
+if (( missing )); then echo "$missing glyph(s) have no font. Run: bash install.sh --fonts"; else echo "All icons have a font."; fi

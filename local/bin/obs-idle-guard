@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# While OBS is open keep the screen awake (like inhibit_idle on the Sway edition),
+# and restore normal blanking when it closes (unless Stream mode is active).
+active=0
+while sleep 5; do
+    if pgrep -x obs >/dev/null 2>&1; then
+        if (( ! active )); then xset s off -dpms 2>/dev/null; active=1; fi
+    elif (( active )); then
+        active=0
+        if [[ "$(cat "$HOME/.local/state/desktop-mode" 2>/dev/null)" != stream ]]; then
+            xset s 600 600 +dpms 2>/dev/null; xset dpms 900 900 900 2>/dev/null
+        fi
+    fi
+done

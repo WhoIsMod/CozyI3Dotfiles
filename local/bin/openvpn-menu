@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+# Tray-style OpenVPN menu (like OpenVPN GUI on Windows).
+# Usage: openvpn-menu [menu|disconnect|import [file.ovpn]]
+# Drop .ovpn files in ~/.config/openvpn-gui/ or use "Import config".
+set -uo pipefail
+
+CFG_DIR="${OPENVPN_GUI_DIR:-$HOME/.config/openvpn-gui}"
+STATE_DIR="$HOME/.local/state/openvpn-gui"
+ACTIVE_FILE="$STATE_DIR/active"
+PID_FILE=/run/openvpn-gui.pid
+LOG_FILE=/run/openvpn-gui.log
+AUTH_FILE="${XDG_RUNTIME_DIR:-/tmp}/openvpn-gui-auth"
+mkdir -p "$CFG_DIR" "$STATE_DIR"
+
+# openvpn is in /usr/sbin on Debian, /usr/bin on Arch; pkexec needs an absolute path
+OVPN_BIN=""
+for c in /usr/sbin/openvpn /usr/bin/openvpn /usr/local/sbin/openvpn; do
+    [[ -x $c ]] && { OVPN_BIN="$c"; break; }
+done
+
+notify()      { notify-send -t 3500 "$1" "${2:-}" 2>/dev/null || true; }
+refresh_bar() { :; }   # polybar polls the status script
+
+is_running() {
+    local pid
+    [[ -r $PID_FILE ]] || return 1
+    pid="$(cat "$PID_FILE" 2>/dev/null)"
+    [[ -n "$pid" && -d "/proc/$pid" ]]
+}
+
+is_connected() {
+    is_running \
+        && ip -4 -o addr show 2>/dev/null | awk '$2 ~ /^tun/ {f=1} END {exit !f}'
+}
+
+# ---------- dialogs (zenity, or kdialog as fallback) ----------
+ask_text() {
+    if command -v zenity >/dev/null; then zenity --entry --title="OpenVPN" --text="$1"
+    elif command -v kdialog >/dev/null; then kdialog --inputbox "$1"
+    else notify "OpenVPN" "Install zenity or kdialog for prompts"; return 1; fi
+}
+ask_secret() {
+    if command -v zenity >/dev/null; then zenity --entry --hide-text --title="OpenVPN" --text="$1"
+    elif command -v kdialog >/dev/null; then kdialog --password "$1"
+    else return 1; fi
+}
+pick_file() {
+    # GTK_USE_PORTAL=0 makes zenity use its own dialog, independent of xdg-desktop-portal.
+    # Filters are case-insensitive-ish and there is always an "All files" fallback.
+    if command -v zenity >/dev/null; then
+        GTK_USE_PORTAL=0 zenity --file-selection --title="Import OpenVPN config" \
+            --filename="$HOME/" \
+            --file-filter='OpenVPN configs | *.ovpn *.OVPN *.conf *.CONF' \
+            --file-filter='All files | *'
+    elif command -v kdialog >/dev/null; then
+        kdialog --getopenfilename "$HOME" $'*.ovpn *.OVPN *.conf *.CONF|OpenVPN configs\n*|All files'
+    else
+        notify "OpenVPN" "No file dialog found (install zenity). Type the path instead."
+        ask_text "Full path to the .ovpn file"
+    fi
+}
+
+# ---------- actions ----------
+disconnect() {
+    if ! is_running; then notify "VPN" "Not connected"; return 0; fi
+    pkexec /usr/bin/kill -TERM "$(cat "$PID_FILE")" || { notify "VPN" "Disconnect cancelled"; return 1; }
+    for _ in $(seq 20); do is_running || break; sleep 0.5; done
+    rm -f "$AUTH_FILE" "$ACTIVE_FILE"
+    refresh_bar
+    notify "VPN disconnected"
+}
+
+watch_connection() {   # background: report success/failure, then shred the auth file
+    local label="$1" i why
+    for i in $(seq 120); do
+        sleep 1
+        if (( i > 4 )) && ! is_running; then
+            rm -f "$AUTH_FILE" "$ACTIVE_FILE"; refresh_bar
+            why="$(grep -E 'AUTH_FAILED|Exiting|ERROR|error' "$LOG_FILE" 2>/dev/null | tail -n1)"
+            notify "VPN failed: $label" "${why:-process exited}"
+            return
+        fi
+        if is_connected; then
+            rm -f "$AUTH_FILE"; refresh_bar
+            notify "VPN connected" "$label"
+            return
+        fi
+    done
+    rm -f "$AUTH_FILE"
+}
+
+connect() {
+    local file="$1" label="$2" user pass
+    local -a auth=()
+    [[ -n "$OVPN_BIN" ]] || { notify "VPN" "openvpn is not installed"; return 1; }
+
+    if is_running; then disconnect || return 1; fi
+
+    # Prompt only when the config has a bare "auth-user-pass" line
+    if grep -qiE '^[[:space:]]*auth-user-pass[[:space:]]*(#.*)?$' "$file"; then
+        user="$(ask_text "Username for $label")" || return 0
+        pass="$(ask_secret "Password for $label")" || return 0
+        ( umask 077; printf '%s\n%s\n' "$user" "$pass" > "$AUTH_FILE" )
+        auth=(--auth-user-pass "$AUTH_FILE")
+    fi
+
+    echo "$label" > "$ACTIVE_FILE"
+    # Pre-create the pid/log files world-readable so the panel can read them (OpenVPN makes them root-only)
+    if ! pkexec /bin/sh -c 'for f in "$1" "$2"; do : > "$f"; chmod 644 "$f"; done; shift 2; exec "$@"' sh \
+            "$PID_FILE" "$LOG_FILE" \
+            "$OVPN_BIN" --cd "$(dirname "$file")" --config "$file" \
+            --daemon openvpn-gui --writepid "$PID_FILE" --log "$LOG_FILE" \
+            "${auth[@]}"; then
+        rm -f "$AUTH_FILE" "$ACTIVE_FILE"
+        notify "VPN" "Connection cancelled or failed to start"
+        return 1
+    fi
+    refresh_bar
+    setsid -f "$0" _watch "$label" >/dev/null 2>&1
+}
+
+import_config() {
+    local src base dir ref r
+    src="${1:-}"
+    [[ -n "$src" ]] || src="$(pick_file)" || return 0
+    src="${src/#\~/$HOME}"
+    if [[ ! -f "$src" ]]; then notify "OpenVPN" "File not found: $src"; return 1; fi
+    base="$(basename "$src")"; base="${base%.*}"
+    dir="$CFG_DIR/$base"
+    mkdir -p "$dir"
+    cp "$src" "$dir/$base.ovpn"
+
+    # Copy externally referenced cert/key files that sit next to the source file
+    while read -r ref; do
+        [[ -z "$ref" || "$ref" == /* ]] && continue
+        r="$(dirname "$src")/$ref"
+        if [[ -f "$r" ]]; then mkdir -p "$dir/$(dirname "$ref")"; cp "$r" "$dir/$ref"; fi
+    done < <(awk '$1 ~ /^(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|pkcs12|extra-certs|dh|crl-verify)$/ && $2 != "" {print $2}' "$src")
+
+    notify "OpenVPN" "Imported: $base"
+}
+
+show_menu() {
+    local -A MAP=()
+    local -a entries=()
+    local active="" f rel label d b disp choice
+
+    is_running && active="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
+
+    while IFS= read -r -d '' f; do
+        rel="${f#"$CFG_DIR"/}"; label="${rel%.*}"
+        d="${label%%/*}"; b="${label##*/}"
+        [[ "$d" == "$b" ]] && label="$b"
+        if [[ -n "$active" && "$label" == "$active" ]]; then disp="● $label  (connected - click to disconnect)"
+        else disp="○ $label"; fi
+        entries+=("$disp"); MAP["$disp"]="$f"
+    done < <(find -L "$CFG_DIR" -maxdepth 2 -type f \( -name '*.ovpn' -o -name '*.conf' \) -print0 | sort -z)
+
+    (( ${#entries[@]} )) || entries+=("(no configs yet - use Import)")
+    entries+=("+ Import config...")
+    is_running && entries+=("× Disconnect")
+    entries+=("▸ Open config folder" "▸ Show log")
+
+    choice="$(printf '%s\n' "${entries[@]}" | cozy-menu --dmenu --prompt "VPN  " \
+              --lines "${#entries[@]}" --width 48)" || exit 0
+
+    case "$choice" in
+        "+ Import config...")    import_config ;;
+        "× Disconnect")          disconnect ;;
+        "▸ Open config folder")  xdg-open "$CFG_DIR" >/dev/null 2>&1 & ;;
+        "▸ Show log")            kitty -e sh -c "less +G '$LOG_FILE' || { echo 'no log yet'; sleep 2; }" & ;;
+        "("*)                    ;;
+        *)
+            f="${MAP[$choice]:-}"
+            [[ -n "$f" ]] || exit 0
+            rel="${f#"$CFG_DIR"/}"; label="${rel%.*}"
+            d="${label%%/*}"; b="${label##*/}"; [[ "$d" == "$b" ]] && label="$b"
+            if [[ "$choice" == "●"* ]]; then disconnect; else connect "$f" "$label"; fi ;;
+    esac
+}
+
+case "${1:-menu}" in
+    menu)       show_menu ;;
+    disconnect) disconnect ;;
+    import)     import_config "${2:-}" ;;
+    _watch)     watch_connection "${2:-vpn}" ;;
+    *) echo "Usage: $0 [menu|disconnect|import [file]]"; exit 1 ;;
+esac

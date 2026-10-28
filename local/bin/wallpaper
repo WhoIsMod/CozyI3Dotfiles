@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# feh wallpaper manager (X11). Usage: wallpaper {init|next|random|set <file>}
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+set -uo pipefail
+DIR="${WALLPAPER_DIR:-$HOME/Pictures/Wallpapers}"
+STATE="$HOME/.local/state/wallpaper"
+mkdir -p "$(dirname "$STATE")" "$DIR"
+
+apply() { echo "$1" > "$STATE"; feh --no-fehbg --bg-fill "$1"; }
+solid() { command -v xsetroot >/dev/null 2>&1 && xsetroot -solid '#1a1d2b'; }
+list()  {
+    find -L "$DIR" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) | sort
+}
+
+case "${1:-}" in
+    init)
+        if [[ -f "$STATE" && -f "$(cat "$STATE")" ]]; then apply "$(cat "$STATE")"
+        else f="$(list | head -n1)"; if [[ -n "$f" ]]; then apply "$f"; else solid; fi; fi ;;
+    next)
+        mapfile -t files < <(list); (( ${#files[@]} )) || exit 0
+        cur="$(cat "$STATE" 2>/dev/null || true)"; idx=-1
+        for i in "${!files[@]}"; do [[ "${files[$i]}" == "$cur" ]] && idx=$i; done
+        apply "${files[$(( (idx + 1) % ${#files[@]} ))]}" ;;
+    random)
+        f="$(list | shuf -n1)"; [[ -n "$f" ]] && apply "$f" ;;
+    set)
+        [[ -f "${2:-}" ]] || { echo "usage: wallpaper set <file>"; exit 1; }
+        apply "$(realpath "$2")" ;;
+    *) echo "Usage: $0 {init|next|random|set <file>}"; exit 1 ;;
+esac

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Start whichever polkit authentication agent is installed (needed for pkexec prompts).
+for a in \
+    /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \
+    /usr/libexec/polkit-gnome-authentication-agent-1 \
+    /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
+    /usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1 \
+    /usr/lib/aarch64-linux-gnu/libexec/polkit-kde-authentication-agent-1 \
+    /usr/libexec/polkit-mate-authentication-agent-1 \
+    /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+    /usr/bin/lxqt-policykit-agent \
+    /usr/bin/lxpolkit; do
+    [[ -x "$a" ]] && exec "$a"
+done
+notify-send "polkit" "No polkit agent found (install policykit-1-gnome or lxpolkit)" 2>/dev/null
+exit 1

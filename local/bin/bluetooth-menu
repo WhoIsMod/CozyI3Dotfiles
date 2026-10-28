@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+# Bluetooth menu for the panel (bluetoothctl + rofi).
+# Usage: bluetooth-menu [menu|toggle]
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+set -uo pipefail
+
+notify() { notify-send -t 3500 "$1" "${2:-}" 2>/dev/null || true; }
+
+powered()      { bluetoothctl show 2>/dev/null | grep -q 'Powered: yes'; }
+paired_list()  { bluetoothctl devices Paired 2>/dev/null || bluetoothctl paired-devices 2>/dev/null; }
+is_connected() { bluetoothctl info "$1" 2>/dev/null | grep -q 'Connected: yes'; }
+
+power_on() {
+    rfkill unblock bluetooth 2>/dev/null || true
+    sleep 0.3
+    bluetoothctl power on >/dev/null 2>&1
+}
+
+toggle_power() {
+    if powered; then
+        bluetoothctl power off >/dev/null 2>&1 && notify "Bluetooth" "Turned off"
+    elif power_on; then
+        notify "Bluetooth" "Turned on"
+    else
+        notify "Bluetooth" "Could not turn on (is the bluetooth service running?)"
+    fi
+}
+
+connect_dev() {
+    local mac="$1" name="$2"
+    notify "Bluetooth" "Connecting to $name..."
+    if timeout 20 bluetoothctl connect "$mac" 2>&1 | grep -q 'Connection successful'; then
+        notify "Bluetooth connected" "$name"
+    else
+        notify "Bluetooth" "Could not connect to $name"
+    fi
+}
+
+disconnect_dev() {
+    local mac="$1" name="$2"
+    timeout 10 bluetoothctl disconnect "$mac" >/dev/null 2>&1
+    notify "Bluetooth disconnected" "$name"
+}
+
+pair_new() {
+    local -A known=()
+    local -a entries=()
+    local mac name choice
+
+    while read -r _ mac _; do known["$mac"]=1; done < <(paired_list)
+
+    notify "Bluetooth" "Scanning for 10 seconds... put your device in pairing mode"
+    timeout 15 bluetoothctl --timeout 10 scan on >/dev/null 2>&1
+
+    while read -r _ mac name; do
+        [[ -n "${known[$mac]:-}" ]] && continue
+        # skip unnamed devices (name is just the MAC address)
+        [[ "$name" =~ ^[0-9A-Fa-f]{2}([-:][0-9A-Fa-f]{2}){5}$ ]] && continue
+        entries+=("$name  [$mac]")
+    done < <(bluetoothctl devices 2>/dev/null)
+
+    if (( ! ${#entries[@]} )); then notify "Bluetooth" "No new devices found"; return 0; fi
+
+    choice="$(printf '%s\n' "${entries[@]}" | cozy-menu --dmenu --prompt "Pair  " \
+              --lines "${#entries[@]}" --width 48)" || return 0
+    mac="${choice##*[}"; mac="${mac%]}"
+    name="${choice%  \[*}"
+
+    notify "Bluetooth" "Pairing with $name..."
+    {
+        printf 'agent NoInputNoOutput\ndefault-agent\n'
+        printf 'pair %s\n' "$mac";    sleep 12
+        printf 'trust %s\n' "$mac";   sleep 1
+        printf 'connect %s\n' "$mac"; sleep 6
+        printf 'quit\n'
+    } | bluetoothctl >/dev/null 2>&1
+
+    if bluetoothctl info "$mac" 2>/dev/null | grep -q 'Paired: yes'; then
+        notify "Bluetooth paired" "$name"
+    else
+        notify "Bluetooth" "Pairing $name failed (devices needing a PIN: use blueman-manager)"
+    fi
+}
+
+show_menu() {
+    local -A MAC=() NAME=()
+    local -a entries=()
+    local mac name disp choice
+
+    if ! powered; then
+        entries+=("⏻ Turn Bluetooth on")
+    else
+        while read -r _ mac name; do
+            [[ -n "$mac" ]] || continue
+            if is_connected "$mac"; then disp="● $name  (connected - click to disconnect)"
+            else disp="○ $name"; fi
+            entries+=("$disp"); MAC["$disp"]="$mac"; NAME["$disp"]="$name"
+        done < <(paired_list)
+        entries+=("+ Pair new device..." "⏻ Turn Bluetooth off")
+    fi
+    command -v blueman-manager >/dev/null 2>&1 && entries+=("▸ Open full manager")
+
+    choice="$(printf '%s\n' "${entries[@]}" | cozy-menu --dmenu --prompt "Bluetooth  " \
+              --lines "${#entries[@]}" --width 52)" || exit 0
+
+    case "$choice" in
+        "⏻ Turn Bluetooth on"|"⏻ Turn Bluetooth off") toggle_power ;;
+        "+ Pair new device...")  pair_new ;;
+        "▸ Open full manager")   setsid -f blueman-manager >/dev/null 2>&1 ;;
+        "● "*) disconnect_dev "${MAC[$choice]}" "${NAME[$choice]}" ;;
+        "○ "*) connect_dev "${MAC[$choice]}" "${NAME[$choice]}" ;;
+    esac
+}
+
+case "${1:-menu}" in
+    menu)   show_menu ;;
+    toggle) toggle_power ;;
+    *) echo "Usage: $0 [menu|toggle]"; exit 1 ;;
+esac

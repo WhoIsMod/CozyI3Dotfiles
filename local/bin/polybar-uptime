@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"; export HOME
+read -r up _ < /proc/uptime
+up="${up%.*}"
+printf '%%{F#ecd08a}%s%%{F-} %dh %02dm\n' "$(printf '\xef\x89\x92')" $((up / 3600)) $((up % 3600 / 60))
